@@ -18,18 +18,22 @@ type skillCreateInput struct {
 	Files       []CreateSkillFileRequest
 }
 
+func marshalSkillConfig(config any) ([]byte, error) {
+	if config == nil {
+		return []byte("{}"), nil
+	}
+	return json.Marshal(config)
+}
+
 // createSkillWithFilesInTx writes a skill plus its supporting files using the
 // provided sqlc Queries handle, which must already be bound to an open
 // transaction. Callers compose skill creation with other writes (e.g. agent
 // template materialization) inside one outer transaction. For standalone
 // skill creation, prefer createSkillWithFiles, which manages its own tx.
 func createSkillWithFilesInTx(ctx context.Context, qtx *db.Queries, input skillCreateInput) (SkillWithFilesResponse, error) {
-	config, err := json.Marshal(input.Config)
+	config, err := marshalSkillConfig(input.Config)
 	if err != nil {
 		return SkillWithFilesResponse{}, err
-	}
-	if input.Config == nil {
-		config = []byte("{}")
 	}
 
 	skill, err := qtx.CreateSkill(ctx, db.CreateSkillParams{
@@ -63,6 +67,46 @@ func createSkillWithFilesInTx(ctx context.Context, qtx *db.Queries, input skillC
 	}, nil
 }
 
+func replaceSkillWithFilesInTx(ctx context.Context, qtx *db.Queries, skillID pgtype.UUID, input skillCreateInput) (SkillWithFilesResponse, error) {
+	config, err := marshalSkillConfig(input.Config)
+	if err != nil {
+		return SkillWithFilesResponse{}, err
+	}
+
+	skill, err := qtx.UpdateSkill(ctx, db.UpdateSkillParams{
+		ID:          skillID,
+		Name:        pgtype.Text{String: sanitizeNullBytes(input.Name), Valid: true},
+		Description: pgtype.Text{String: sanitizeNullBytes(input.Description), Valid: true},
+		Content:     pgtype.Text{String: sanitizeNullBytes(input.Content), Valid: true},
+		Config:      config,
+	})
+	if err != nil {
+		return SkillWithFilesResponse{}, err
+	}
+
+	if err := qtx.DeleteSkillFilesBySkill(ctx, skill.ID); err != nil {
+		return SkillWithFilesResponse{}, err
+	}
+
+	fileResps := make([]SkillFileResponse, 0, len(input.Files))
+	for _, f := range input.Files {
+		sf, err := qtx.UpsertSkillFile(ctx, db.UpsertSkillFileParams{
+			SkillID: skill.ID,
+			Path:    sanitizeNullBytes(f.Path),
+			Content: sanitizeNullBytes(f.Content),
+		})
+		if err != nil {
+			return SkillWithFilesResponse{}, err
+		}
+		fileResps = append(fileResps, skillFileToResponse(sf))
+	}
+
+	return SkillWithFilesResponse{
+		SkillResponse: skillToResponse(skill),
+		Files:         fileResps,
+	}, nil
+}
+
 func (h *Handler) createSkillWithFiles(ctx context.Context, input skillCreateInput) (SkillWithFilesResponse, error) {
 	tx, err := h.TxStarter.Begin(ctx)
 	if err != nil {
@@ -73,6 +117,27 @@ func (h *Handler) createSkillWithFiles(ctx context.Context, input skillCreateInp
 	qtx := h.Queries.WithTx(tx)
 
 	result, err := createSkillWithFilesInTx(ctx, qtx, input)
+	if err != nil {
+		return SkillWithFilesResponse{}, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return SkillWithFilesResponse{}, err
+	}
+
+	return result, nil
+}
+
+func (h *Handler) replaceSkillWithFiles(ctx context.Context, skillID pgtype.UUID, input skillCreateInput) (SkillWithFilesResponse, error) {
+	tx, err := h.TxStarter.Begin(ctx)
+	if err != nil {
+		return SkillWithFilesResponse{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	qtx := h.Queries.WithTx(tx)
+
+	result, err := replaceSkillWithFilesInTx(ctx, qtx, skillID, input)
 	if err != nil {
 		return SkillWithFilesResponse{}, err
 	}

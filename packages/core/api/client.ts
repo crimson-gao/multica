@@ -114,8 +114,10 @@ import {
   EMPTY_ATTACHMENT,
   EMPTY_CREATE_AGENT_FROM_TEMPLATE_RESPONSE,
   EMPTY_LIST_ISSUES_RESPONSE,
+  EMPTY_SKILL,
   EMPTY_TIMELINE_ENTRIES,
   ListIssuesResponseSchema,
+  SkillSchema,
   SubscribersListSchema,
   TimelineEntriesSchema,
 } from "./schemas";
@@ -1152,6 +1154,28 @@ export class ApiClient {
     return this.fetch("/api/skills/import", {
       method: "POST",
       body: JSON.stringify(data),
+    });
+  }
+
+  async importSkillZip(
+    file: File,
+    data?: { name?: string; description?: string; overwrite?: boolean },
+  ): Promise<Skill> {
+    const form = new FormData();
+    form.append("file", file);
+    if (data?.name) form.append("name", data.name);
+    if (data?.description) form.append("description", data.description);
+    if (data?.overwrite != null) {
+      form.append("overwrite", String(data.overwrite));
+    }
+
+    const res = await this.fetchRaw("/api/skills/import-zip", {
+      method: "POST",
+      body: form,
+    });
+    const raw = await res.json() as unknown;
+    return parseWithFallback(raw, SkillSchema, EMPTY_SKILL, {
+      endpoint: "POST /api/skills/import-zip",
     });
   }
 

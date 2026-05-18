@@ -14,6 +14,7 @@ import {
   Save,
   Sparkles,
   Trash2,
+  Upload,
 } from "lucide-react";
 import type {
   Agent,
@@ -194,6 +195,7 @@ function OriginSidebarCard({
   if (origin.type === "manual") return null;
 
   const isRuntime = origin.type === "runtime_local";
+  const isZipUpload = origin.type === "zip_upload";
   const label =
     origin.type === "runtime_local"
       ? t(($) => $.detail.origin_card.imported_runtime)
@@ -201,13 +203,17 @@ function OriginSidebarCard({
         ? t(($) => $.detail.origin_card.imported_clawhub)
         : origin.type === "github"
           ? t(($) => $.detail.origin_card.imported_github)
-          : t(($) => $.detail.origin_card.imported_skills_sh);
+          : origin.type === "zip_upload"
+            ? t(($) => $.detail.origin_card.imported_zip)
+            : t(($) => $.detail.origin_card.imported_skills_sh);
 
   return (
     <div className="rounded-md border bg-muted/30 p-3">
       <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
         {isRuntime ? (
           <HardDrive className="h-3 w-3" />
+        ) : isZipUpload ? (
+          <Upload className="h-3 w-3" />
         ) : (
           <Sparkles className="h-3 w-3" />
         )}
@@ -545,6 +551,7 @@ export function SkillDetailPage({ skillId }: { skillId: string }) {
     if (origin.type === "clawhub") return t(($) => $.detail.subline.origin_clawhub);
     if (origin.type === "skills_sh") return t(($) => $.detail.subline.origin_skills_sh);
     if (origin.type === "github") return t(($) => $.detail.subline.origin_github);
+    if (origin.type === "zip_upload") return t(($) => $.detail.subline.origin_zip);
     return t(($) => $.detail.subline.origin_workspace);
   })();
 

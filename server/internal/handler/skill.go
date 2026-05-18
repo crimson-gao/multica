@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"archive/zip"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,7 +11,10 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	pathpkg "path"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -455,9 +460,10 @@ type ImportSkillRequest struct {
 // reject. fetchRawFile enforces the per-file cap; importedSkill.addFile
 // enforces the bundle-wide caps.
 const (
-	maxImportFileSize  = 1 << 20 // 1 MiB per file
-	maxImportTotalSize = 8 << 20 // 8 MiB per import bundle (sum of supporting files)
-	maxImportFileCount = 128     // max number of supporting files
+	maxImportFileSize      = 1 << 20 // 1 MiB per file
+	maxImportTotalSize     = 8 << 20 // 8 MiB per import bundle (sum of supporting files)
+	maxImportFileCount     = 128     // max number of supporting files
+	maxUploadSkillZipBytes = 1 << 20 // 1 MiB compressed upload cap
 )
 
 // importedSkill holds the data extracted from an external source.
@@ -535,6 +541,226 @@ func isLikelyBinaryFilePath(path string) bool {
 		return true
 	}
 	return false
+}
+
+func readZipEntryText(f *zip.File, limit int64) (string, bool, error) {
+	if f.UncompressedSize64 > uint64(limit) {
+		return "", false, nil
+	}
+
+	rc, err := f.Open()
+	if err != nil {
+		return "", false, err
+	}
+	defer rc.Close()
+
+	data, err := io.ReadAll(io.LimitReader(rc, limit+1))
+	if err != nil {
+		return "", false, err
+	}
+	if int64(len(data)) > limit {
+		return "", false, nil
+	}
+	return string(data), true, nil
+}
+
+func normalizeSkillZipPath(raw string) (string, bool, error) {
+	if raw == "" {
+		return "", false, nil
+	}
+	if strings.Contains(raw, "\x00") {
+		return "", false, fmt.Errorf("zip contains an invalid file path")
+	}
+
+	cleaned := pathpkg.Clean(strings.ReplaceAll(raw, "\\", "/"))
+	if cleaned == "." {
+		return "", false, nil
+	}
+	if pathpkg.IsAbs(cleaned) || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+		return "", false, fmt.Errorf("zip contains an unsafe file path: %s", raw)
+	}
+	return cleaned, true, nil
+}
+
+func isIgnoredSkillArchiveName(name string) bool {
+	if name == "" {
+		return true
+	}
+	if strings.HasPrefix(name, ".") {
+		return true
+	}
+	switch strings.ToLower(name) {
+	case "__macosx", "license", "license.md", "license.txt":
+		return true
+	default:
+		return false
+	}
+}
+
+func isIgnoredSkillZipPath(cleaned string) bool {
+	for _, segment := range strings.Split(cleaned, "/") {
+		if isIgnoredSkillArchiveName(segment) {
+			return true
+		}
+	}
+	return false
+}
+
+func skillZipCandidateRoot(cleaned string) (string, bool) {
+	if cleaned == "SKILL.md" {
+		return "", true
+	}
+	if strings.HasSuffix(cleaned, "/SKILL.md") {
+		return strings.TrimSuffix(cleaned, "/SKILL.md"), true
+	}
+	return "", false
+}
+
+func zipRelPathForSkillRoot(cleaned, root string) (string, bool) {
+	if root == "" {
+		return cleaned, true
+	}
+	if cleaned == root {
+		return "", false
+	}
+	prefix := root + "/"
+	if !strings.HasPrefix(cleaned, prefix) {
+		return "", false
+	}
+	return strings.TrimPrefix(cleaned, prefix), true
+}
+
+func fallbackZipSkillName(filename, root string) string {
+	if root != "" {
+		return pathpkg.Base(root)
+	}
+	base := filepath.Base(filename)
+	if ext := filepath.Ext(base); ext != "" {
+		base = strings.TrimSuffix(base, ext)
+	}
+	base = strings.TrimSpace(base)
+	if base == "" || base == "." {
+		return "uploaded-skill"
+	}
+	return base
+}
+
+func parseUploadedSkillZip(r io.Reader, filename string) (*importedSkill, error) {
+	data, err := io.ReadAll(io.LimitReader(r, maxUploadSkillZipBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read zip upload: %w", err)
+	}
+	if int64(len(data)) > maxUploadSkillZipBytes {
+		return nil, fmt.Errorf("zip upload exceeds %d byte limit", maxUploadSkillZipBytes)
+	}
+
+	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		return nil, fmt.Errorf("invalid zip archive: %w", err)
+	}
+
+	entries := make(map[string]*zip.File)
+	candidates := make(map[string]struct{})
+	for _, f := range zr.File {
+		if f.FileInfo().IsDir() {
+			continue
+		}
+		cleaned, ok, err := normalizeSkillZipPath(f.Name)
+		if err != nil {
+			return nil, err
+		}
+		if !ok || isIgnoredSkillZipPath(cleaned) {
+			continue
+		}
+		if _, exists := entries[cleaned]; exists {
+			return nil, fmt.Errorf("zip contains duplicate file path: %s", cleaned)
+		}
+		entries[cleaned] = f
+		if root, ok := skillZipCandidateRoot(cleaned); ok {
+			candidates[root] = struct{}{}
+		}
+	}
+
+	roots := make([]string, 0, len(candidates))
+	for root := range candidates {
+		roots = append(roots, root)
+	}
+	sort.Strings(roots)
+	if len(roots) == 0 {
+		return nil, fmt.Errorf("zip must contain a SKILL.md file")
+	}
+	if len(roots) > 1 {
+		return nil, fmt.Errorf("zip must contain exactly one skill")
+	}
+	root := roots[0]
+	mainPath := "SKILL.md"
+	if root != "" {
+		mainPath = root + "/SKILL.md"
+	}
+	mainFile := entries[mainPath]
+	if mainFile == nil {
+		return nil, fmt.Errorf("zip must contain a SKILL.md file")
+	}
+
+	content, ok, err := readZipEntryText(mainFile, maxImportFileSize)
+	if err != nil {
+		return nil, fmt.Errorf("read SKILL.md: %w", err)
+	}
+	if !ok {
+		return nil, fmt.Errorf("SKILL.md exceeds %d bytes", maxImportFileSize)
+	}
+	if strings.TrimSpace(content) == "" {
+		return nil, fmt.Errorf("SKILL.md is empty")
+	}
+
+	name, description := parseSkillFrontmatter(content)
+	if name == "" {
+		name = fallbackZipSkillName(filename, root)
+	}
+
+	imported := &importedSkill{
+		name:        name,
+		description: description,
+		content:     content,
+		origin: map[string]any{
+			"type":        "zip_upload",
+			"source_path": filepath.Base(filename),
+		},
+	}
+
+	paths := make([]string, 0, len(entries))
+	for p := range entries {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	for _, p := range paths {
+		if p == mainPath {
+			continue
+		}
+		rel, ok := zipRelPathForSkillRoot(p, root)
+		if !ok || rel == "" {
+			continue
+		}
+		if strings.EqualFold(pathpkg.Base(rel), "SKILL.md") {
+			continue
+		}
+		if !validateFilePath(rel) || isIgnoredSkillZipPath(rel) || isLikelyBinaryFilePath(rel) {
+			continue
+		}
+
+		fileContent, ok, err := readZipEntryText(entries[p], maxImportFileSize)
+		if err != nil {
+			return nil, fmt.Errorf("read %s: %w", rel, err)
+		}
+		if !ok {
+			continue
+		}
+		if err := imported.addFile(rel, fileContent); err != nil {
+			return nil, err
+		}
+	}
+
+	return imported, nil
 }
 
 // --- ClawHub types ---
@@ -1647,6 +1873,136 @@ func (h *Handler) ImportSkill(w http.ResponseWriter, r *http.Request) {
 		Config:      config,
 		Files:       files,
 	})
+	if err != nil {
+		if isUniqueViolation(err) {
+			writeError(w, http.StatusConflict, "a skill with this name already exists")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to create skill: "+err.Error())
+		return
+	}
+	actorType, actorID := h.resolveActor(r, creatorID, workspaceID)
+	h.publish(protocol.EventSkillCreated, workspaceID, actorType, actorID, map[string]any{"skill": resp})
+	writeJSON(w, http.StatusCreated, resp)
+}
+
+func (h *Handler) ImportSkillZip(w http.ResponseWriter, r *http.Request) {
+	workspaceID := h.resolveWorkspaceID(r)
+
+	creatorID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	if !ok {
+		return
+	}
+	creatorUUID := parseUUID(creatorID)
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSkillZipBytes+(1<<20))
+	if err := r.ParseMultipartForm(maxUploadSkillZipBytes); err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			writeError(w, http.StatusRequestEntityTooLarge, "zip upload is too large")
+			return
+		}
+		writeError(w, http.StatusBadRequest, "invalid multipart upload")
+		return
+	}
+	if r.MultipartForm != nil {
+		defer r.MultipartForm.RemoveAll()
+	}
+
+	overwrite := false
+	if raw := strings.TrimSpace(r.FormValue("overwrite")); raw != "" {
+		parsed, err := strconv.ParseBool(raw)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "overwrite must be a boolean")
+			return
+		}
+		overwrite = parsed
+	}
+
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "zip file is required")
+		return
+	}
+	defer file.Close()
+	if header.Size > maxUploadSkillZipBytes {
+		writeError(w, http.StatusRequestEntityTooLarge, "zip upload is too large")
+		return
+	}
+
+	imported, err := parseUploadedSkillZip(file, header.Filename)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if name := strings.TrimSpace(r.FormValue("name")); name != "" {
+		imported.name = name
+	}
+	if description := strings.TrimSpace(r.FormValue("description")); description != "" {
+		imported.description = description
+	}
+
+	files := make([]CreateSkillFileRequest, 0, len(imported.files))
+	for _, f := range imported.files {
+		if !validateFilePath(f.path) {
+			continue
+		}
+		files = append(files, CreateSkillFileRequest{
+			Path:    f.path,
+			Content: f.content,
+		})
+	}
+
+	config := map[string]any{}
+	if imported.origin != nil {
+		config["origin"] = imported.origin
+	}
+
+	input := skillCreateInput{
+		WorkspaceID: workspaceUUID,
+		CreatorID:   creatorUUID,
+		Name:        imported.name,
+		Description: imported.description,
+		Content:     imported.content,
+		Config:      config,
+		Files:       files,
+	}
+
+	if overwrite {
+		existing, err := h.Queries.GetSkillByWorkspaceAndName(r.Context(), db.GetSkillByWorkspaceAndNameParams{
+			WorkspaceID: workspaceUUID,
+			Name:        imported.name,
+		})
+		if err != nil && !isNotFound(err) {
+			writeError(w, http.StatusInternalServerError, "failed to check existing skill: "+err.Error())
+			return
+		}
+		if err == nil {
+			if !h.canManageSkill(w, r, existing) {
+				return
+			}
+			resp, err := h.replaceSkillWithFiles(r.Context(), existing.ID, input)
+			if err != nil {
+				if isUniqueViolation(err) {
+					writeError(w, http.StatusConflict, "a skill with this name already exists")
+					return
+				}
+				writeError(w, http.StatusInternalServerError, "failed to overwrite skill: "+err.Error())
+				return
+			}
+			actorType, actorID := h.resolveActor(r, creatorID, workspaceID)
+			h.publish(protocol.EventSkillUpdated, workspaceID, actorType, actorID, map[string]any{"skill": resp})
+			writeJSON(w, http.StatusOK, resp)
+			return
+		}
+	}
+
+	resp, err := h.createSkillWithFiles(r.Context(), input)
 	if err != nil {
 		if isUniqueViolation(err) {
 			writeError(w, http.StatusConflict, "a skill with this name already exists")

@@ -6,6 +6,7 @@ import type {
   Attachment,
   CreateAgentFromTemplateResponse,
   ListIssuesResponse,
+  Skill,
   TimelineEntry,
 } from "../types";
 
@@ -82,6 +83,41 @@ export const EMPTY_ATTACHMENT: Attachment = {
   content_type: "",
   size_bytes: 0,
   created_at: "",
+};
+
+export const SkillFileSchema = z.object({
+  id: z.string(),
+  skill_id: z.string(),
+  path: z.string(),
+  content: z.string().default(""),
+  created_at: z.string(),
+  updated_at: z.string(),
+}).loose();
+
+export const SkillSchema = z.object({
+  id: z.string(),
+  workspace_id: z.string(),
+  name: z.string().default(""),
+  description: z.string().default(""),
+  content: z.string().default(""),
+  config: z.record(z.string(), z.unknown()).default({}),
+  created_by: z.string().nullable().default(null),
+  created_at: z.string(),
+  updated_at: z.string(),
+  files: z.array(SkillFileSchema).default([]),
+}).loose();
+
+export const EMPTY_SKILL: Skill = {
+  id: "",
+  workspace_id: "",
+  name: "",
+  description: "",
+  content: "",
+  config: {},
+  created_by: null,
+  created_at: "",
+  updated_at: "",
+  files: [],
 };
 
 // All object schemas use `.loose()` so unknown server-side fields pass

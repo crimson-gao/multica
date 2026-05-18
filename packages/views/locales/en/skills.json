@@ -49,7 +49,8 @@
     "source_runtime_unknown": "From a runtime",
     "source_clawhub": "From ClawHub",
     "source_skills_sh": "From Skills.sh",
-    "source_github": "From GitHub"
+    "source_github": "From GitHub",
+    "source_zip": "From ZIP upload"
   },
   "detail": {
     "all_skills": "All skills",
@@ -72,6 +73,7 @@
       "origin_clawhub": "Imported · ClawHub",
       "origin_skills_sh": "Imported · Skills.sh",
       "origin_github": "Imported · GitHub",
+      "origin_zip": "Imported · ZIP",
       "origin_workspace": "Workspace",
       "updated_label": "Updated {{when}}",
       "by_creator": "by {{name}}"
@@ -107,6 +109,7 @@
       "imported_clawhub": "Imported from ClawHub",
       "imported_skills_sh": "Imported from Skills.sh",
       "imported_github": "Imported from GitHub",
+      "imported_zip": "Imported from ZIP upload",
       "provider": "provider · {{provider}}"
     },
     "not_found": {
@@ -159,6 +162,10 @@
         "title": "Import from URL",
         "desc": "Fetch a published skill by URL. Files are pulled server-side."
       },
+      "zip": {
+        "title": "Upload ZIP",
+        "desc": "Import one skill from a ZIP archive."
+      },
       "runtime": {
         "title": "Copy from runtime",
         "desc": "Scan a local runtime and promote one of its on-disk skills into this workspace."
@@ -169,6 +176,8 @@
       "manual_desc": "Start from a blank SKILL.md and write your own instructions.",
       "url_title": "Import from URL",
       "url_desc": "Pull a published skill from ClawHub or Skills.sh.",
+      "zip_title": "Upload ZIP",
+      "zip_desc": "Import a SKILL.md bundle from a local archive.",
       "runtime_title": "Copy from runtime",
       "runtime_desc": "Promote a skill already installed on your local runtime."
     },
@@ -197,6 +206,29 @@
       "fallback_error": "Import failed",
       "cancel": "Cancel",
       "toast_imported": "Skill imported"
+    },
+    "zip": {
+      "file_label": "ZIP file",
+      "file_hint": "Archive must be 1 MB or smaller and contain one SKILL.md at the root or inside one folder.",
+      "selected_file": "{{name}} selected",
+      "file_too_large": "ZIP file must be 1 MB or smaller.",
+      "name_label": "Workspace skill name",
+      "name_placeholder": "Leave blank to use SKILL.md frontmatter",
+      "description_label": "Description",
+      "description_placeholder": "Optional — leave blank to use SKILL.md frontmatter.",
+      "name_conflict_hint": " The imported skill's name already exists.",
+      "fallback_error": "Import failed",
+      "cancel": "Cancel",
+      "import": "Import",
+      "importing": "Importing…",
+      "toast_imported": "Skill imported",
+      "overwrite_dialog": {
+        "title": "Overwrite existing skill?",
+        "description": "A skill with this name already exists in the workspace. Continuing will replace its SKILL.md and supporting files.",
+        "cancel": "Keep existing",
+        "confirm": "Overwrite",
+        "overwriting": "Overwriting…"
+      }
     }
   },
   "runtime_import": {

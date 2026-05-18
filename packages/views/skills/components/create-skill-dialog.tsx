@@ -10,11 +10,12 @@ import {
   Loader2,
   Pencil,
   Plus,
+  Upload,
   X as XIcon,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
-import { api } from "@multica/core/api";
+import { ApiError, api } from "@multica/core/api";
 import type { Skill } from "@multica/core/types";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { isImeComposing } from "@multica/core/utils";
@@ -27,6 +28,16 @@ import {
   DialogContent,
   DialogTitle,
 } from "@multica/ui/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@multica/ui/components/ui/alert-dialog";
 import {
   Tooltip,
   TooltipContent,
@@ -42,7 +53,8 @@ import { openExternal } from "../../platform";
 import { RuntimeLocalSkillImportPanel } from "./runtime-local-skill-import-panel";
 import { useT } from "../../i18n";
 
-type Method = "chooser" | "manual" | "url" | "runtime";
+type Method = "chooser" | "manual" | "url" | "zip" | "runtime";
+const MAX_SKILL_ZIP_BYTES = 1 << 20;
 
 function seedAfterCreate(
   qc: ReturnType<typeof useQueryClient>,
@@ -59,7 +71,7 @@ function isNameConflictError(msg: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Chooser — initial method picker (3 cards)
+// Chooser — initial method picker
 // ---------------------------------------------------------------------------
 
 function MethodChooser({ onChoose }: { onChoose: (m: Method) => void }) {
@@ -67,11 +79,12 @@ function MethodChooser({ onChoose }: { onChoose: (m: Method) => void }) {
   const methods: {
     key: Method;
     icon: typeof Plus;
-    titleKey: "manual" | "url" | "runtime";
+    titleKey: "manual" | "url" | "zip" | "runtime";
   }[] = [
     { key: "manual", icon: Plus, titleKey: "manual" },
     { key: "url", icon: Download, titleKey: "url" },
     { key: "runtime", icon: HardDrive, titleKey: "runtime" },
+    { key: "zip", icon: Upload, titleKey: "zip" },
   ];
   return (
     <div className="grid gap-2 p-5">
@@ -424,6 +437,227 @@ function UrlForm({
 }
 
 // ---------------------------------------------------------------------------
+// ZIP upload form
+// ---------------------------------------------------------------------------
+
+function ZipForm({
+  onCreated,
+  onCancel,
+}: {
+  onCreated: (skill: Skill) => void;
+  onCancel: () => void;
+}) {
+  const { t } = useT("skills");
+  const qc = useQueryClient();
+  const wsId = useWorkspaceId();
+  const [file, setFile] = useState<File | null>(null);
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [confirmOverwrite, setConfirmOverwrite] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const fadeStyle = useScrollFade(scrollRef);
+
+  const submit = async (overwrite = false) => {
+    if (!file) return;
+    setLoading(true);
+    setError("");
+    try {
+      const skill = await api.importSkillZip(file, {
+        name: name.trim() || undefined,
+        description: description.trim() || undefined,
+        overwrite,
+      });
+      if (!skill.id) {
+        throw new Error(t(($) => $.create.zip.fallback_error));
+      }
+      seedAfterCreate(qc, wsId, skill);
+      toast.success(t(($) => $.create.zip.toast_imported));
+      onCreated(skill);
+    } catch (err) {
+      if (!overwrite && err instanceof ApiError && err.status === 409) {
+        setConfirmOverwrite(true);
+        setLoading(false);
+        return;
+      }
+      setError(
+        err instanceof Error
+          ? err.message
+          : t(($) => $.create.zip.fallback_error),
+      );
+      setLoading(false);
+    }
+  };
+
+  return (
+    <>
+      <div
+        ref={scrollRef}
+        style={fadeStyle}
+        className="flex-1 min-h-0 space-y-4 overflow-y-auto px-5 py-4"
+      >
+        <div className="space-y-1.5">
+          <Label
+            htmlFor="import-zip-file"
+            className="text-xs text-muted-foreground"
+          >
+            {t(($) => $.create.zip.file_label)}
+          </Label>
+          <Input
+            id="import-zip-file"
+            type="file"
+            accept=".zip,application/zip,application/x-zip-compressed"
+            autoFocus
+            onChange={(e) => {
+              const nextFile = e.currentTarget.files?.[0] ?? null;
+              if (nextFile && nextFile.size > MAX_SKILL_ZIP_BYTES) {
+                e.currentTarget.value = "";
+                setFile(null);
+                setError(t(($) => $.create.zip.file_too_large));
+                return;
+              }
+              setFile(nextFile);
+              setError("");
+            }}
+          />
+          <p className="text-xs text-muted-foreground">
+            {file
+              ? t(($) => $.create.zip.selected_file, { name: file.name })
+              : t(($) => $.create.zip.file_hint)}
+          </p>
+        </div>
+
+        <div className="space-y-1.5">
+          <Label
+            htmlFor="import-zip-name"
+            className="text-xs text-muted-foreground"
+          >
+            {t(($) => $.create.zip.name_label)}
+          </Label>
+          <Input
+            id="import-zip-name"
+            value={name}
+            onChange={(e) => {
+              setName(e.target.value);
+              setError("");
+            }}
+            placeholder={t(($) => $.create.zip.name_placeholder)}
+            onKeyDown={(e) => {
+              if (isImeComposing(e)) return;
+              if (e.key === "Enter") submit();
+            }}
+          />
+        </div>
+
+        <div className="space-y-1.5">
+          <Label
+            htmlFor="import-zip-desc"
+            className="text-xs text-muted-foreground"
+          >
+            <Pencil className="h-3 w-3" />
+            {t(($) => $.create.zip.description_label)}
+          </Label>
+          <Textarea
+            id="import-zip-desc"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder={t(($) => $.create.zip.description_placeholder)}
+            rows={3}
+            className="resize-none"
+          />
+        </div>
+
+        {error && (
+          <div
+            role="alert"
+            className="flex items-start gap-2 rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive"
+          >
+            <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span>
+              {error}
+              {isNameConflictError(error) && (
+                <>{t(($) => $.create.zip.name_conflict_hint)}</>
+              )}
+            </span>
+          </div>
+        )}
+      </div>
+
+      <div className="flex shrink-0 items-center justify-end gap-2 border-t bg-muted/30 px-5 py-3">
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={onCancel}
+          disabled={loading}
+        >
+          {t(($) => $.create.zip.cancel)}
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          onClick={() => submit()}
+          disabled={!file || loading}
+        >
+          {loading ? (
+            <>
+              <Loader2 className="h-3 w-3 animate-spin" />
+              {t(($) => $.create.zip.importing)}
+            </>
+          ) : (
+            <>
+              <Upload className="h-3 w-3" />
+              {t(($) => $.create.zip.import)}
+            </>
+          )}
+        </Button>
+      </div>
+
+      <AlertDialog
+        open={confirmOverwrite}
+        onOpenChange={(open) => {
+          if (!open && !loading) setConfirmOverwrite(false);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {t(($) => $.create.zip.overwrite_dialog.title)}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {t(($) => $.create.zip.overwrite_dialog.description)}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={loading}>
+              {t(($) => $.create.zip.overwrite_dialog.cancel)}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={loading}
+              onClick={() => {
+                setConfirmOverwrite(false);
+                submit(true);
+              }}
+            >
+              {loading ? (
+                <>
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  {t(($) => $.create.zip.overwrite_dialog.overwriting)}
+                </>
+              ) : (
+                t(($) => $.create.zip.overwrite_dialog.confirm)
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Root dialog
 // ---------------------------------------------------------------------------
 
@@ -512,6 +746,12 @@ export function CreateSkillDialog({
         )}
         {method === "url" && (
           <UrlForm
+            onCreated={handleCreated}
+            onCancel={() => setMethod("chooser")}
+          />
+        )}
+        {method === "zip" && (
+          <ZipForm
             onCreated={handleCreated}
             onCancel={() => setMethod("chooser")}
           />

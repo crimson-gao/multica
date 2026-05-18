@@ -255,6 +255,49 @@ describe("ApiClient", () => {
   });
 
   describe("chat attachment wiring", () => {
+    it("importSkillZip sends optional overwrite metadata in the multipart body", async () => {
+      const fetchMock = vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            id: "skill-1",
+            workspace_id: "ws-1",
+            name: "review-helper",
+            description: "Review code",
+            content: "---\nname: review-helper\n---\n",
+            config: {},
+            created_by: "user-1",
+            created_at: "2026-05-18T00:00:00Z",
+            updated_at: "2026-05-18T00:00:00Z",
+            files: [],
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const client = new ApiClient("https://api.example.test");
+      const file = new File(["zip"], "skill.zip", { type: "application/zip" });
+      await client.importSkillZip(file, {
+        name: "review-helper",
+        description: "Review code",
+        overwrite: true,
+      });
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const [url, init] = fetchMock.mock.calls[0]!;
+      expect(url).toBe("https://api.example.test/api/skills/import-zip");
+      expect(init?.method).toBe("POST");
+      const body = init?.body as FormData;
+      expect(body).toBeInstanceOf(FormData);
+      expect(body.get("file")).toBe(file);
+      expect(body.get("name")).toBe("review-helper");
+      expect(body.get("description")).toBe("Review code");
+      expect(body.get("overwrite")).toBe("true");
+    });
+
     it("uploadFile includes chat_session_id in the FormData body", async () => {
       const fetchMock = vi.fn().mockResolvedValue(
         new Response(JSON.stringify({ id: "att-1", url: "https://cdn/x" }), {

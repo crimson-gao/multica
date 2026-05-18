@@ -61,7 +61,8 @@
     "source_runtime_unknown": "来自某个运行时",
     "source_clawhub": "来自 ClawHub",
     "source_skills_sh": "来自 Skills.sh",
-    "source_github": "来自 GitHub"
+    "source_github": "来自 GitHub",
+    "source_zip": "来自 ZIP 上传"
   },
   "detail": {
     "all_skills": "全部 skill",
@@ -84,6 +85,7 @@
       "origin_clawhub": "导入自 · ClawHub",
       "origin_skills_sh": "导入自 · Skills.sh",
       "origin_github": "导入自 · GitHub",
+      "origin_zip": "导入自 · ZIP",
       "origin_workspace": "工作区",
       "updated_label": "{{when}}更新",
       "by_creator": "由 {{name}}"
@@ -119,6 +121,7 @@
       "imported_clawhub": "从 ClawHub 导入",
       "imported_skills_sh": "从 Skills.sh 导入",
       "imported_github": "从 GitHub 导入",
+      "imported_zip": "从 ZIP 上传导入",
       "provider": "provider · {{provider}}"
     },
     "not_found": {
@@ -171,6 +174,10 @@
         "title": "从 URL 导入",
         "desc": "通过 URL 拉取已发布的 skill，文件由服务端拉取。"
       },
+      "zip": {
+        "title": "上传 ZIP",
+        "desc": "从 ZIP 压缩包导入单个 skill。"
+      },
       "runtime": {
         "title": "从运行时复制",
         "desc": "扫描本地运行时，把它磁盘上的 skill 提升到工作区。"
@@ -181,6 +188,8 @@
       "manual_desc": "从空白 SKILL.md 开始，自己写指令。",
       "url_title": "从 URL 导入",
       "url_desc": "从 ClawHub 或 Skills.sh 拉取已发布的 skill。",
+      "zip_title": "上传 ZIP",
+      "zip_desc": "从本地压缩包导入 SKILL.md 文件包。",
       "runtime_title": "从运行时复制",
       "runtime_desc": "把本地运行时里已经装好的 skill 提升过来。"
     },
@@ -209,6 +218,29 @@
       "fallback_error": "导入失败",
       "cancel": "取消",
       "toast_imported": "已导入 skill"
+    },
+    "zip": {
+      "file_label": "ZIP 文件",
+      "file_hint": "压缩包必须不超过 1 MB，并且只包含一个 SKILL.md，可位于根目录或单个文件夹内。",
+      "selected_file": "已选择 {{name}}",
+      "file_too_large": "ZIP 文件必须不超过 1 MB。",
+      "name_label": "工作区里的 skill 名称",
+      "name_placeholder": "留空则使用 SKILL.md frontmatter",
+      "description_label": "描述",
+      "description_placeholder": "可选——留空则使用 SKILL.md frontmatter。",
+      "name_conflict_hint": "导入的 skill 名称已存在。",
+      "fallback_error": "导入失败",
+      "cancel": "取消",
+      "import": "导入",
+      "importing": "导入中...",
+      "toast_imported": "已导入 skill",
+      "overwrite_dialog": {
+        "title": "覆盖已有 skill？",
+        "description": "工作区里已存在同名 skill。继续后会替换它的 SKILL.md 和关联文件。",
+        "cancel": "保留已有",
+        "confirm": "继续覆盖",
+        "overwriting": "覆盖中..."
+      }
     }
   },
   "runtime_import": {
